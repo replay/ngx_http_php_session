@@ -6,7 +6,8 @@ extract_value(ngx_str_t *searchkey, ngx_str_t *session, ngx_str_t *result)
 {
     
     if (extract_value_next_level(searchkey, session, result) == NO_RESULT){
-        return NGX_ERROR;
+        result->data = NULL;
+        result->len = 0;
     }
     
     return NGX_OK;
@@ -124,8 +125,10 @@ next_element(ngx_str_t *data_element, ngx_str_t *data)
     if (data_element_end == NULL && data_pos == data->data + data->len) {
         data_element_end = data_pos;
     }
-    while (*data_element_start == '}') {
-        data_element_start++;
+    if (data_element_start != NULL) {
+        while (data_element_start <= data_element->data + data_element->len && *data_element_start == '}') {
+            data_element_start++;
+        }
     }
     data_element->data = data_element_start;
     data_element->len = data_element_end - data_element_start;
