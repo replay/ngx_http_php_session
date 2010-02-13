@@ -149,6 +149,7 @@ ngx_http_php_session_parse_directive(ngx_conf_t *cf, ngx_command_t *cmd, void *c
     if (v->get_handler == NULL)
     {
         v->get_handler = ngx_http_php_session_variable;
+        v->data = index;
     }
     
     search->result_index = index;
@@ -204,24 +205,28 @@ ngx_http_php_session_compile_session(ngx_conf_t *cf, ngx_http_php_session_search
 
 static ngx_int_t
 ngx_http_php_session_variable(ngx_http_request_t *r, ngx_http_variable_value_t *v, uintptr_t data)
-{
-    printf("session_variable_handler\n");
-    
+{    
     ngx_http_php_session_loc_conf_t     *pscf = ngx_http_get_module_loc_conf(r, ngx_http_php_session_module);
     ngx_uint_t                           search_num;
+    ngx_http_php_session_search_t       *searches;
     ngx_http_php_session_search_t       *search;
-    ngx_http_variable_value_t           *vv;
     
+    searches = (ngx_http_php_session_search_t*) pscf->searches->elts;
     for (search_num = 0; search_num < pscf->searches->nelts; search_num++) {
-        search = (ngx_http_php_session_search_t *) pscf->searches->elts + (search_num * sizeof(ngx_http_php_session_search_t));
-        if (search->result_index == data)
-        {
+        search = &searches[search_num]; 
+        if (search->result_index == data) {
             break;
+        } else {
+            if (search_num == pscf->searches->nelts) {
+                ngx_log_error(NGX_LOG_INFO, r->connection->log, 0, "error finding the right search variable");
+                return NGX_ERROR;
+            }
         }
     }
     
+    
     if (ngx_http_script_run(r, &search->session, search->session_lengths->elts, 0 , search->session_values->elts) == NULL) {
-        ngx_log_error(NGX_LOG_INFO, r->connection->log, 0, "session evaluation failed");
+        
         return NGX_ERROR;
     }
     
@@ -234,10 +239,9 @@ ngx_http_php_session_variable(ngx_http_request_t *r, ngx_http_variable_value_t *
         return NGX_ERROR;
     }
     
-    vv = r->variables + search->result_index;
-    vv->len = search->result_string.len;
-    vv->data = search->result_string.data;
-    vv->valid = 1;
+    v->len = search->result_string.len;
+    v->data = search->result_string.data;
+    v->valid = 1;
     
     return NGX_OK;
 }
