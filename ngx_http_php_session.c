@@ -209,7 +209,7 @@ ngx_http_php_session_variable(ngx_http_request_t *r, ngx_http_variable_value_t *
     ngx_http_php_session_loc_conf_t     *pscf = ngx_http_get_module_loc_conf(r, ngx_http_php_session_module);
     ngx_uint_t                           search_num;
     ngx_http_php_session_search_t       *searches;
-    ngx_http_php_session_search_t       *search;
+    ngx_http_php_session_search_t       *search = NULL;
     
     searches = (ngx_http_php_session_search_t*) pscf->searches->elts;
     for (search_num = 0; search_num < pscf->searches->nelts; search_num++) {
