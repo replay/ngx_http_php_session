@@ -1,0 +1,4 @@
+ngx_addon_name=ngx_http_php_session
+HTTP_MODULES="$HTTP_MODULES ngx_http_php_session_module"
+NGX_ADDON_SRCS="$NGX_ADDON_SRCS $ngx_addon_dir/ngx_http_php_session.c"
+CFLAGS="$CFLAGS -I$ngx_addon_dir"
