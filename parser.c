@@ -56,7 +56,9 @@ extract_value_loop(extract_ctx *ctx, ngx_str_t *result)
             }
             ctx->session_start++;
             ctx->session_len = next_separator_by_level(ctx->session_start, ctx->session_end - ctx->session_start) - ctx->session_start;
-            if (extract_value_loop(ctx, result) == NO_RESULT) {
+            if (extract_value_loop(ctx, result) == GOT_RESULT) {
+                return GOT_RESULT;
+            } else {
                 return NO_RESULT;
             }
         }
@@ -83,6 +85,9 @@ static ngx_int_t
 shift_element(u_char **start, u_char **end, unsigned *len)
 {
     u_char *pos;
+    if ((*end - *start - *len) <= 0) {
+        return NO_RESULT;
+    }
     pos = next_separator_by_level(*start + *len + 1, *end - *start - *len - 1);
     if (pos == NULL) {
         *start = *start + *len + 1;
