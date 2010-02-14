@@ -4,8 +4,28 @@
 static ngx_int_t
 extract_value(ngx_str_t *searchkey, ngx_str_t *session, ngx_str_t *result)
 {
+    extract_ctx ctx;
+    u_char *pos;
+
+    ctx.search_start = searchkey->data;
+    pos = next_separator_by_level(searchkey->data, searchkey->len);
+    if (pos == NULL) {
+        ctx.search_len = searchkey->len;
+    } else {
+        ctx.search_len = pos - searchkey->data;
+    }
+    ctx.search_end = searchkey->data + searchkey->len;
     
-    if (extract_value_next_level(searchkey, session, result) == NO_RESULT){
+    ctx.session_start = session->data;
+    pos = next_separator_by_level(session->data, session->len);
+    if (pos == NULL) {
+        ctx.session_len = session->len;
+    } else {
+        ctx.session_len = pos - session->data;
+    }
+    ctx.session_end = session->data + session->len;
+    
+    if (extract_value_loop(&ctx, result) == NO_RESULT){
         result->data = NULL;
         result->len = 0;
     }
@@ -14,125 +34,91 @@ extract_value(ngx_str_t *searchkey, ngx_str_t *session, ngx_str_t *result)
 }
 
 static ngx_int_t
-extract_value_next_level(ngx_str_t *searchkey, ngx_str_t *session, ngx_str_t *result)
+extract_value_loop(extract_ctx *ctx, ngx_str_t *result)
 {
-    ngx_int_t    next_search_element;
-    ngx_int_t    next_session_element;
     
-    ngx_str_t    sub_session;
-    ngx_str_t    sub_searchkey;
-    
-    ngx_str_t    session_element;
-    ngx_str_t    search_element;
-    
-    session_element.data = NULL;
-    search_element.data = NULL;
-    
-    next_session_element = NEXT_ELEMENT_OK;
-    next_search_element = next_element(&search_element, searchkey);
-    while (next_session_element == NEXT_ELEMENT_OK) {
-        next_session_element = next_element(&session_element, session);
-        if (ngx_strncmp(search_element.data, session_element.data, search_element.len) == 0) {
-            next_search_element = next_element(&search_element, searchkey);
-            next_session_element = next_element(&session_element, session);
-            if (next_search_element == NO_NEXT_ELEMENT) {
-                if (store_result(&session_element, result) == NGX_OK) {
-                    return GOT_RESULT;
-                } else {
+    while (ctx->session_start < ctx->session_end) {        
+        if (ngx_strncmp(ctx->search_start, ctx->session_start, ctx->search_len) == 0) {
+            if (ctx->search_start + ctx->search_len == ctx->search_end) {
+                if (shift_element(&ctx->session_start, &ctx->session_end, &ctx->session_len) == NO_RESULT) {
                     return NO_RESULT;
                 }
-            } else {
-                if (*session_element.data != 'a') {
-                    printf("not enough nested levels in session_data\n");
-                    return NO_RESULT;
+                if (store_result(ctx, result) == NGX_ERROR) {
+                    return NGX_ERROR;
                 }
-                while (*session_element.data != '{') {
-                    session_element.data++;
-                    session_element.len--;
-                    if (session_element.len == 0) {
-                        return NO_RESULT;
-                    }
-                }
-                session_element.data++;
-                session_element.len--;
-                session_element.len--; // cut off } in the end of the string
-                sub_session.data = session_element.data;
-                sub_session.len = session_element.len;
-                sub_searchkey.data = search_element.data;
-                sub_searchkey.len = searchkey->data + searchkey->len - search_element.data;
-                if (extract_value_next_level(&sub_searchkey, &sub_session, result) == GOT_RESULT){
-                    return GOT_RESULT;
-                }
+                return GOT_RESULT;
+            }
+            if (shift_element(&ctx->search_start, &ctx->search_end, &ctx->search_len) == NO_RESULT) {
+                return NO_RESULT;
+            }
+            while (ctx->session_start < ctx->session_end && *ctx->session_start != '{') {
+                ctx->session_start++;
+            }
+            ctx->session_start++;
+            ctx->session_len = next_separator_by_level(ctx->session_start, ctx->session_end - ctx->session_start) - ctx->session_start;
+            if (extract_value_loop(ctx, result) == NO_RESULT) {
+                return NO_RESULT;
             }
         }
-        next_session_element = next_element(&session_element, session);
+        
+        if (shift_element(&ctx->session_start, &ctx->session_end, &ctx->session_len) == NO_RESULT) {
+            return NO_RESULT;
+        }
+        if (shift_element(&ctx->session_start, &ctx->session_end, &ctx->session_len) == NO_RESULT) {
+            return NO_RESULT;
+        }
     }
-    
     return NO_RESULT;
 }
 
 static ngx_int_t
-store_result(ngx_str_t *session_element, ngx_str_t *result)
+store_result(extract_ctx *ctx, ngx_str_t *result)
 {
-    result->data = session_element->data;
-    result->len = session_element->len + 1;
-    
+    result->data = ctx->session_start;
+    result->len = ctx->session_len;
     return NGX_OK;
 }
 
 static ngx_int_t
-next_element(ngx_str_t *data_element, ngx_str_t *data)
+shift_element(u_char **start, u_char **end, unsigned *len)
 {
-    u_char              *data_pos;
-    u_char              *data_element_start = NULL;
-    u_char              *data_element_end = NULL;
-    ngx_int_t            nested_level = 0;
-    
+    u_char *pos;
+    pos = next_separator_by_level(*start + *len + 1, *end - *start - *len - 1);
+    if (pos == NULL) {
+        *start = *start + *len + 1;
+        *len = *end - *start;
+        return NGX_OK;
+    }
+    *start = *start + *len + 1;
+    *len = pos - *start;
+    return NGX_OK;
+}
 
-    if (data_element->data == NULL) {
-        data_element->data = data->data;
-        data_element->len = 0;
-        data_element_start = data->data;
-    }
+u_char *
+next_separator_by_level(u_char *string, ngx_uint_t len)
+{
+    ngx_uint_t pos = 0;
+    ngx_uint_t nested_level = 0;
     
-    data_pos = data_element->data + data_element->len;
-    while (is_element_separator(data_pos+1) == ELEMENT_IS_SEPARATOR && data_pos < data->data + data->len) {
-        data_pos++;
-    }
-    if (data_pos >= data->data + data->len) {
-        return NO_NEXT_ELEMENT;
-    }
-    while (data_element_end == NULL && data_pos < data->data + data->len) {
-        if (*data_pos == '{') {
+    while (pos < len) {
+        if (*(string + pos) == '{') {
             nested_level++;
+            pos++;
+            continue;
         }
-        if (*data_pos == '}') {
+        if (*(string + pos) == '}') {
             nested_level--;
         }
         if (nested_level > 0) {
-            data_pos++;
+            pos++;
             continue;
         }
-        if (is_element_separator(data_pos) == ELEMENT_IS_SEPARATOR) {
-            if (data_element_start == 0) {
-                data_element_start = data_pos + 1;
-            } else {
-                data_element_end = data_pos - 1;
-            }
-         }
-         data_pos++;
-    }
-    if (data_element_end == NULL && data_pos == data->data + data->len) {
-        data_element_end = data_pos;
-    }
-    if (data_element_start != NULL) {
-        while (data_element_start <= data_element->data + data_element->len && *data_element_start == '}') {
-            data_element_start++;
+        if (is_element_separator(string + pos) == IS_SEPARATOR) {
+            return string + pos;
         }
+        pos++;
     }
-    data_element->data = data_element_start;
-    data_element->len = data_element_end - data_element_start;
-    return NEXT_ELEMENT_OK;
+    return NULL;
 }
 
 static ngx_int_t
@@ -141,8 +127,8 @@ is_element_separator(u_char *pos)
     ngx_uint_t separators_pos;
     for (separators_pos = 0; separators_pos < element_separators.len; separators_pos++) {
         if (*(element_separators.data + separators_pos) == *pos) {
-            return ELEMENT_IS_SEPARATOR;
+            return IS_SEPARATOR;
         }
     }
-    return ELEMENT_IS_NOT_SEPARATOR;
+    return IS_NOT_SEPARATOR;
 }
