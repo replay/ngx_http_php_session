@@ -5,7 +5,7 @@ This is an Nginx module that can extract values out of a serialized PHP Session 
 
 Some more explanation
 =====================
-http://mauro-stettler.blogspot.com/2010/02/nginx-module-to-extract-values-out-of.html
+http://mauro-stettler.blogspot.com/2010/02/variables-from-php-sessions-in-nginx.html
 
 Example
 ===============
