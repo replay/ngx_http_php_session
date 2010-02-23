@@ -3,6 +3,10 @@ Nginx PHP session
 
 This is an Nginx module that can extract values out of a serialized PHP Session and store them into an Nginx variable to make them reusable in the Nginx configuration
 
+Some more explanation
+=====================
+http://mauro-stettler.blogspot.com/2010/02/nginx-module-to-extract-values-out-of.html
+
 Example
 ===============
 
