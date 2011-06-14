@@ -80,13 +80,13 @@ You can use it like for example following:
 
 And the output will look like :
 
-   s:6:"DrEvil"
-   DrEvil
+    s:6:"DrEvil"
+    DrEvil
 
 The php_session_strip_formatting supports the following serialized datatypes:
 
 Type    | Identifier
---------|-----------
+--------|----------:
 Boolean | b
 Integer | i
 Double  | d
