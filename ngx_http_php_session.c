@@ -199,17 +199,18 @@ static ngx_int_t
 ngx_http_php_session_find_variable_from_array(ngx_array_t *array, ngx_http_php_session_value_t **value, uintptr_t data)
 {
     ngx_uint_t                          i;
-    ngx_http_php_session_value_t       *values;
     ngx_http_php_session_value_t       *tmp_value;
+    u_char                             *tmp_void;
 
-    values = (ngx_http_php_session_value_t*) array->elts;
+    tmp_void = (u_char*) array->elts;
 
     for (i = 0; i < array->nelts; i++) {
-        tmp_value = &values[i];
+        tmp_value = (ngx_http_php_session_value_t*) tmp_void;
         if (tmp_value->result_index == data) {
             *value = tmp_value;
             break;
         }
+        tmp_void += array->size;
     }
     if (i == array->nelts)
     {
