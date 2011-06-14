@@ -37,13 +37,24 @@ typedef struct {
 } ngx_http_php_session_ctx_t;
 
 
+// create location confs
 static void *ngx_http_php_session_create_loc_conf(ngx_conf_t *cf);
 static char *ngx_http_php_session_merge_loc_conf(ngx_conf_t *cf, void *parent, void *child);
-static char * ngx_http_php_session_parse_directive(ngx_conf_t *cf, ngx_command_t *cmd, void *conf);
-static ngx_int_t ngx_http_php_session_variable(ngx_http_request_t *r, ngx_http_variable_value_t *v, uintptr_t data);
-static char *ngx_http_php_session_strip_formatting_directive(ngx_conf_t *cf, ngx_command_t *cmd, void *conf);
-static ngx_int_t ngx_http_php_session_strip_formatting(ngx_http_request_t *r, ngx_http_variable_value_t *v, uintptr_t data);
+
+// compile variables
 static char * ngx_http_php_session_compile_variable(ngx_http_script_compile_t *sc, ngx_conf_t *cf, ngx_http_php_session_variable_data_t *vardata);
+
+// push into array and if array doesn't exist yet create it
+void * ngx_http_php_session_push_or_create_array(ngx_array_t *array, ngx_conf_t *cf, size_t size);
+
+// directive handlers
+static char * ngx_http_php_session_parse_directive(ngx_conf_t *cf, ngx_command_t *cmd, void *conf);
+static char *ngx_http_php_session_strip_formatting_directive(ngx_conf_t *cf, ngx_command_t *cmd, void *conf);
+
+// variable getters
+static ngx_int_t ngx_http_php_session_variable(ngx_http_request_t *r, ngx_http_variable_value_t *v, uintptr_t data);
+static ngx_int_t ngx_http_php_session_strip_formatting_variable(ngx_http_request_t *r, ngx_http_variable_value_t *v, uintptr_t data);
+
     
 
 static ngx_command_t  ngx_http_php_session_commands[] = {
@@ -99,7 +110,9 @@ ngx_http_php_session_create_loc_conf(ngx_conf_t *cf)
     if (pscf == NULL) {
         return NGX_CONF_ERROR;
     }
-    
+
+    pscf->searches = NULL;
+    pscf->extractions = NULL;
     pscf->cf = cf;
     
     return pscf;
@@ -115,77 +128,6 @@ ngx_http_php_session_merge_loc_conf(ngx_conf_t *cf, void *parent,
     if (prev->searches != NULL)
     {
         conf->searches = prev->searches;
-    }
-    
-    return NGX_CONF_OK;
-}
-
-
-static char *
-ngx_http_php_session_parse_directive(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
-{
-    ngx_http_script_compile_t           sc_session, sc_searchkey;
-    ngx_http_php_session_loc_conf_t    *pscf = conf;
-    ngx_str_t                          *value;
-    ngx_http_php_session_search_t      *search;
-    ngx_http_variable_t                *v;
-    ngx_int_t                           index;
-    
-    if (pscf->searches == NULL)
-    {
-        pscf->searches = ngx_array_create(cf->pool, cf->args->nelts, sizeof(ngx_http_php_session_search_t));
-        if(pscf->searches == NULL) {
-            return NGX_CONF_ERROR;
-        }
-    }
-    
-    search = ngx_array_push(pscf->searches);
-    if (search == NULL) {
-        return NGX_CONF_ERROR;
-    }
-    
-    value = cf->args->elts;
-    
-    if (value[1].data[0] != '$') {
-        ngx_conf_log_error(NGX_LOG_EMERG, cf, 0, "invalid variable name \"%V\"", &value[1]);
-        return NGX_CONF_ERROR;
-    }
-    
-    value[1].len--;
-    value[1].data++;
-    
-    v = ngx_http_add_variable(cf, &value[1], NGX_HTTP_VAR_CHANGEABLE);
-    if (v == NULL) {
-        return NGX_CONF_ERROR;
-    }
-    
-    index = ngx_http_get_variable_index(cf, &value[1]);
-    if (index == NGX_ERROR) {
-        return NGX_CONF_ERROR;
-    }
-    
-    if (v->get_handler == NULL)
-    {
-        v->get_handler = ngx_http_php_session_variable;
-        v->data = index;
-    }
-    
-    search->result_index = index;
-    
-    search->session.value.len = value[2].len;
-    search->session.value.data = value[2].data;
-    search->searchkey.value.len = value[3].len;
-    search->searchkey.value.data = value[3].data;
-    
-
-    if (ngx_http_php_session_compile_variable(&sc_session, cf, &search->session) != NGX_CONF_OK)
-    {
-        return NGX_CONF_ERROR;
-    }
-
-    if (ngx_http_php_session_compile_variable(&sc_searchkey, cf, &search->searchkey) != NGX_CONF_OK)
-    {
-        return NGX_CONF_ERROR;
     }
     
     return NGX_CONF_OK;
@@ -209,6 +151,133 @@ ngx_http_php_session_compile_variable(ngx_http_script_compile_t *sc, ngx_conf_t 
     }
 
     return NGX_CONF_OK;
+}
+
+void *
+ngx_http_php_session_push_or_create_array(ngx_array_t *array, ngx_conf_t *cf, size_t size)
+{
+    if (array == NULL)
+    {
+        array = ngx_array_create(cf->pool, cf->args->nelts, size);
+        if(array == NULL) {
+            return NULL;
+        }
+    }
+
+    return(ngx_array_push(array));
+}
+
+static char *
+ngx_http_php_session_register_result_variable(ngx_int_t *index, ngx_conf_t *cf, ngx_http_get_variable_pt getter)
+{
+    ngx_str_t              *value;
+    ngx_http_variable_t    *v;
+
+    value = cf->args->elts;
+    
+    if (value[1].data[0] != '$') {
+        ngx_conf_log_error(NGX_LOG_EMERG, cf, 0, "invalid variable name \"%V\"", &value[1]);
+        return NGX_CONF_ERROR;
+    }
+    
+    value[1].len--;
+    value[1].data++;
+    
+    v = ngx_http_add_variable(cf, &value[1], NGX_HTTP_VAR_CHANGEABLE);
+    if (v == NULL) {
+        return NGX_CONF_ERROR;
+    }
+    
+    *index = ngx_http_get_variable_index(cf, &value[1]);
+    if (*index == NGX_ERROR) {
+        return NGX_CONF_ERROR;
+    }
+    
+    if (v->get_handler == NULL)
+    {
+        v->get_handler = *getter;
+        v->data = *index;
+    }
+    
+    return NGX_CONF_OK;
+}
+
+static char *
+ngx_http_php_session_parse_directive(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
+{
+    ngx_http_script_compile_t           sc_session, sc_searchkey;
+    ngx_http_php_session_loc_conf_t    *pscf = conf;
+    ngx_http_php_session_search_t      *search;
+    ngx_int_t                           index;
+    ngx_str_t                          *value;
+    
+    search = ngx_http_php_session_push_or_create_array(pscf->searches, cf, sizeof(ngx_http_php_session_search_t));
+    if (search == NULL)
+    {
+        return NGX_CONF_ERROR;
+    }
+    
+    if (ngx_http_php_session_register_result_variable(&index, cf, ngx_http_php_session_variable) != NGX_CONF_OK)
+    {
+        return NGX_CONF_ERROR;
+    }
+
+    search->result_index = index;
+
+    value = cf->args->elts;
+    
+    search->session.value.len = value[2].len;
+    search->session.value.data = value[2].data;
+    search->searchkey.value.len = value[3].len;
+    search->searchkey.value.data = value[3].data;
+    
+
+    if (ngx_http_php_session_compile_variable(&sc_session, cf, &search->session) != NGX_CONF_OK)
+    {
+        return NGX_CONF_ERROR;
+    }
+
+    if (ngx_http_php_session_compile_variable(&sc_searchkey, cf, &search->searchkey) != NGX_CONF_OK)
+    {
+        return NGX_CONF_ERROR;
+    }
+    
+    return NGX_CONF_OK;
+}
+
+static char *
+ngx_http_php_session_strip_formatting_directive(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
+{
+    ngx_http_php_session_loc_conf_t        *pscf = conf;
+    ngx_http_php_session_value_extraction_t     *extraction;
+    ngx_http_script_compile_t               sc_extraction;
+    ngx_int_t                               index;
+    ngx_str_t                              *value;
+    
+    extraction = ngx_http_php_session_push_or_create_array(pscf->extractions, cf, sizeof(ngx_http_php_session_value_extraction_t));
+    if (extraction == NULL)
+    {
+        return NGX_CONF_ERROR;
+    }
+
+    if (ngx_http_php_session_register_result_variable(&index, cf, ngx_http_php_session_strip_formatting_variable) != NGX_CONF_OK)
+    {
+        return NGX_CONF_ERROR;
+    }
+
+    extraction->result_index = index;
+
+    value = cf->args->elts;
+
+    extraction->value.value.len = value[2].len;
+    extraction->value.value.data = value[2].data;
+
+    if (ngx_http_php_session_compile_variable(&sc_extraction, cf, &extraction->value) != NGX_CONF_OK)
+    {
+        return NGX_CONF_ERROR;
+    }
+
+    return NGX_OK;
 }
 
 static ngx_int_t
@@ -254,70 +323,8 @@ ngx_http_php_session_variable(ngx_http_request_t *r, ngx_http_variable_value_t *
     return NGX_OK;
 }
 
-static char *
-ngx_http_php_session_strip_formatting_directive(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
-{
-    ngx_http_php_session_loc_conf_t        *pscf = conf;
-    ngx_str_t                              *value;
-    ngx_http_php_session_value_extraction_t     *extraction;
-    ngx_http_variable_t                    *v;
-    ngx_int_t                               index;
-    ngx_http_script_compile_t               sc_extraction;
-    
-    if (pscf->extractions == NULL)
-    {
-        pscf->extractions = ngx_array_create(cf->pool, cf->args->nelts, sizeof(ngx_http_php_session_value_extraction_t));
-        if(pscf->extractions == NULL) {
-            return NGX_CONF_ERROR;
-        }
-    }
-    
-    extraction = ngx_array_push(pscf->extractions);
-    if (extraction == NULL) {
-        return NGX_CONF_ERROR;
-    }
-	
-    value = cf->args->elts;
-    
-    if (value[1].data[0] != '$') {
-        ngx_conf_log_error(NGX_LOG_EMERG, cf, 0, "invalid variable name \"%V\"", &value[1]);
-        return NGX_CONF_ERROR;
-    }
-    
-    value[1].len--;
-    value[1].data++;
-    
-    v = ngx_http_add_variable(cf, &value[1], NGX_HTTP_VAR_CHANGEABLE);
-    if (v == NULL) {
-        return NGX_CONF_ERROR;
-    }
-    
-    index = ngx_http_get_variable_index(cf, &value[1]);
-    if (index == NGX_ERROR) {
-        return NGX_CONF_ERROR;
-    }
-    
-    if (v->get_handler == NULL)
-    {
-        v->get_handler = ngx_http_php_session_strip_formatting;
-        v->data = index;
-    }
-
-    extraction->result_index = index;
-
-    extraction->value.value.len = value[2].len;
-    extraction->value.value.data = value[2].data;
-
-    if (ngx_http_php_session_compile_variable(&sc_extraction, cf, &extraction->value) != NGX_CONF_OK)
-    {
-        return NGX_CONF_ERROR;
-    }
-
-    return NGX_OK;
-}
-
 static ngx_int_t
-ngx_http_php_session_strip_formatting(ngx_http_request_t *r, ngx_http_variable_value_t *v, uintptr_t data)
+ngx_http_php_session_strip_formatting_variable(ngx_http_request_t *r, ngx_http_variable_value_t *v, uintptr_t data)
 {
     ngx_http_php_session_loc_conf_t     *pscf = ngx_http_get_module_loc_conf(r, ngx_http_php_session_module);
     ngx_uint_t                           extraction_num;
