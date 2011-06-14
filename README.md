@@ -85,11 +85,11 @@ And the output will look like :
 
 The php_session_strip_formatting supports the following serialized datatypes:
 
-Type    | Identifier
---------|----------:
-Boolean | b
-Integer | i
-Double  | d
-String  | s
+<b>Type</b> | <b>Identifier</b>
+------------|-----------
+Boolean     | b
+Integer     | i
+Double      | d
+String      | s
 
 All other Datatypes will simply be ignored and the result variable will be left empty;
