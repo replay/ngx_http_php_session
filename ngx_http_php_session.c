@@ -19,6 +19,10 @@ typedef struct {
 
 typedef struct {
     ngx_uint_t                       result_index;
+} ngx_http_php_session_value_t;
+
+typedef struct {
+    ngx_uint_t                       result_index;
     ngx_str_t                        result_string;
     
     ngx_http_php_session_variable_data_t session;
@@ -44,8 +48,11 @@ static char *ngx_http_php_session_merge_loc_conf(ngx_conf_t *cf, void *parent, v
 // compile variables
 static char * ngx_http_php_session_compile_variable(ngx_http_script_compile_t *sc, ngx_conf_t *cf, ngx_http_php_session_variable_data_t *vardata);
 
-// push into array and if array doesn't exist yet create it
-void * ngx_http_php_session_push_or_create_array(ngx_array_t *array, ngx_conf_t *cf, size_t size);
+// register the variable where the result will be stored in
+static char * ngx_http_php_session_register_result_variable(ngx_int_t *index, ngx_conf_t *cf, ngx_http_get_variable_pt getter);
+
+// finding a variable by its index
+static ngx_int_t ngx_http_php_session_find_variable_from_array(ngx_array_t *array, ngx_http_php_session_value_t **value, uintptr_t data);
 
 // directive handlers
 static char * ngx_http_php_session_parse_directive(ngx_conf_t *cf, ngx_command_t *cmd, void *conf);
@@ -141,7 +148,7 @@ ngx_http_php_session_compile_variable(ngx_http_script_compile_t *sc, ngx_conf_t 
     sc->cf = cf;
     sc->source = &vardata->value;
     sc->lengths = &vardata->lengths;
-    sc->lengths = &vardata->values;
+    sc->values = &vardata->values;
     sc->variables = ngx_http_script_variables_count(&vardata->value);
     sc->complete_lengths = 1;
     sc->complete_values = 1;
@@ -151,20 +158,6 @@ ngx_http_php_session_compile_variable(ngx_http_script_compile_t *sc, ngx_conf_t 
     }
 
     return NGX_CONF_OK;
-}
-
-void *
-ngx_http_php_session_push_or_create_array(ngx_array_t *array, ngx_conf_t *cf, size_t size)
-{
-    if (array == NULL)
-    {
-        array = ngx_array_create(cf->pool, cf->args->nelts, size);
-        if(array == NULL) {
-            return NULL;
-        }
-    }
-
-    return(ngx_array_push(array));
 }
 
 static char *
@@ -202,6 +195,29 @@ ngx_http_php_session_register_result_variable(ngx_int_t *index, ngx_conf_t *cf, 
     return NGX_CONF_OK;
 }
 
+static ngx_int_t
+ngx_http_php_session_find_variable_from_array(ngx_array_t *array, ngx_http_php_session_value_t **value, uintptr_t data)
+{
+    ngx_uint_t                          i;
+    ngx_http_php_session_value_t       *values;
+    ngx_http_php_session_value_t       *tmp_value;
+
+    values = (ngx_http_php_session_value_t*) array->elts;
+
+    for (i = 0; i < array->nelts; i++) {
+        tmp_value = &values[i];
+        if (tmp_value->result_index == data) {
+            *value = tmp_value;
+            break;
+        }
+    }
+    if (i == array->nelts)
+    {
+        return NGX_ERROR;
+    }
+    return NGX_OK;
+}
+
 static char *
 ngx_http_php_session_parse_directive(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
 {
@@ -210,10 +226,17 @@ ngx_http_php_session_parse_directive(ngx_conf_t *cf, ngx_command_t *cmd, void *c
     ngx_http_php_session_search_t      *search;
     ngx_int_t                           index;
     ngx_str_t                          *value;
-    
-    search = ngx_http_php_session_push_or_create_array(pscf->searches, cf, sizeof(ngx_http_php_session_search_t));
-    if (search == NULL)
+
+    if (pscf->searches == NULL)
     {
+        pscf->searches = ngx_array_create(cf->pool, cf->args->nelts, sizeof(ngx_http_php_session_search_t));
+        if(pscf->searches == NULL) {
+            return NGX_CONF_ERROR;
+        }
+    }
+    
+    search = ngx_array_push(pscf->searches);
+    if (search == NULL) {
         return NGX_CONF_ERROR;
     }
     
@@ -254,9 +277,16 @@ ngx_http_php_session_strip_formatting_directive(ngx_conf_t *cf, ngx_command_t *c
     ngx_int_t                               index;
     ngx_str_t                              *value;
     
-    extraction = ngx_http_php_session_push_or_create_array(pscf->extractions, cf, sizeof(ngx_http_php_session_value_extraction_t));
-    if (extraction == NULL)
+    if (pscf->extractions == NULL)
     {
+        pscf->extractions = ngx_array_create(cf->pool, cf->args->nelts, sizeof(ngx_http_php_session_value_extraction_t));
+        if(pscf->extractions == NULL) {
+            return NGX_CONF_ERROR;
+        }
+    }
+    
+    extraction = ngx_array_push(pscf->extractions);
+    if (extraction == NULL) {
         return NGX_CONF_ERROR;
     }
 
@@ -284,23 +314,13 @@ static ngx_int_t
 ngx_http_php_session_variable(ngx_http_request_t *r, ngx_http_variable_value_t *v, uintptr_t data)
 {    
     ngx_http_php_session_loc_conf_t     *pscf = ngx_http_get_module_loc_conf(r, ngx_http_php_session_module);
-    ngx_uint_t                           search_num;
-    ngx_http_php_session_search_t       *searches;
     ngx_http_php_session_search_t       *search = NULL;
-    
-    searches = (ngx_http_php_session_search_t*) pscf->searches->elts;
-    for (search_num = 0; search_num < pscf->searches->nelts; search_num++) {
-        search = &searches[search_num]; 
-        if (search->result_index == data) {
-            break;
-        } else {
-            if (search_num == pscf->searches->nelts) {
-                ngx_log_error(NGX_LOG_INFO, r->connection->log, 0, "error finding the right search variable");
-                return NGX_ERROR;
-            }
-        }
+
+    if (ngx_http_php_session_find_variable_from_array(pscf->searches, (ngx_http_php_session_value_t**) &search, data) != NGX_OK)
+    {
+        ngx_log_error(NGX_LOG_INFO, r->connection->log, 0, "error finding the right extraction variable");
+        return NGX_ERROR;
     }
-    
     
     if (ngx_http_script_run(r, &search->session.value, search->session.lengths->elts, 0 , search->session.values->elts) == NULL) {
         
@@ -327,21 +347,12 @@ static ngx_int_t
 ngx_http_php_session_strip_formatting_variable(ngx_http_request_t *r, ngx_http_variable_value_t *v, uintptr_t data)
 {
     ngx_http_php_session_loc_conf_t     *pscf = ngx_http_get_module_loc_conf(r, ngx_http_php_session_module);
-    ngx_uint_t                           extraction_num;
-    ngx_http_php_session_value_extraction_t   *extractions;
-    ngx_http_php_session_value_extraction_t   *extraction = NULL;
-    
-    extractions = (ngx_http_php_session_value_extraction_t*) pscf->extractions->elts;
-    for (extraction_num = 0; extraction_num < pscf->extractions->nelts; extraction_num++) {
-        extraction = &extractions[extraction_num]; 
-        if (extraction->result_index == data) {
-            break;
-        } else {
-            if (extraction_num == pscf->extractions->nelts) {
-                ngx_log_error(NGX_LOG_INFO, r->connection->log, 0, "error finding the right extraction variable");
-                return NGX_ERROR;
-            }
-        }
+    ngx_http_php_session_value_extraction_t   *extraction;
+
+    if (ngx_http_php_session_find_variable_from_array(pscf->extractions, (ngx_http_php_session_value_t**) &extraction, data) != NGX_OK)
+    {
+        ngx_log_error(NGX_LOG_INFO, r->connection->log, 0, "error finding the right extraction variable");
+        return NGX_ERROR;
     }
     
     if (ngx_http_script_run(r, &extraction->value.value, extraction->value.lengths->elts, 0 , extraction->value.values->elts) == NULL) {
