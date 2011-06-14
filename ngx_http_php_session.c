@@ -12,25 +12,24 @@ typedef struct {
 } ngx_http_php_session_loc_conf_t;
 
 typedef struct {
+    ngx_str_t                        value;
+    ngx_array_t                     *lengths;
+    ngx_array_t                     *values;
+} ngx_http_php_session_variable_data_t;
+
+typedef struct {
     ngx_uint_t                       result_index;
     ngx_str_t                        result_string;
     
-    ngx_str_t                        session;
-    ngx_array_t                     *session_lengths;
-    ngx_array_t                     *session_values;
-    
-    ngx_str_t                        searchkey;
-    ngx_array_t                     *searchkey_lengths;
-    ngx_array_t                     *searchkey_values;
+    ngx_http_php_session_variable_data_t session;
+    ngx_http_php_session_variable_data_t searchkey;
 } ngx_http_php_session_search_t;
 
 typedef struct {
     ngx_uint_t                       result_index;
     ngx_str_t                        result_string;
     
-    ngx_str_t                        value;
-    ngx_array_t                     *value_lengths;
-    ngx_array_t                     *value_values;
+    ngx_http_php_session_variable_data_t value;
 } ngx_http_php_session_value_extraction_t;
     
 typedef struct {
@@ -41,11 +40,10 @@ typedef struct {
 static void *ngx_http_php_session_create_loc_conf(ngx_conf_t *cf);
 static char *ngx_http_php_session_merge_loc_conf(ngx_conf_t *cf, void *parent, void *child);
 static char * ngx_http_php_session_parse_directive(ngx_conf_t *cf, ngx_command_t *cmd, void *conf);
-static char *ngx_http_php_session_compile_session(ngx_conf_t *cf, ngx_http_php_session_search_t *search);
 static ngx_int_t ngx_http_php_session_variable(ngx_http_request_t *r, ngx_http_variable_value_t *v, uintptr_t data);
 static char *ngx_http_php_session_strip_formatting_directive(ngx_conf_t *cf, ngx_command_t *cmd, void *conf);
 static ngx_int_t ngx_http_php_session_strip_formatting(ngx_http_request_t *r, ngx_http_variable_value_t *v, uintptr_t data);
-static char *ngx_http_php_session_compile_extraction(ngx_conf_t *cf, ngx_http_php_session_value_extraction_t *extraction);
+static char * ngx_http_php_session_compile_variable(ngx_http_script_compile_t *sc, ngx_conf_t *cf, ngx_http_php_session_variable_data_t *vardata);
     
 
 static ngx_command_t  ngx_http_php_session_commands[] = {
@@ -126,11 +124,12 @@ ngx_http_php_session_merge_loc_conf(ngx_conf_t *cf, void *parent,
 static char *
 ngx_http_php_session_parse_directive(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
 {
-    ngx_http_php_session_loc_conf_t     *pscf = conf;
-    ngx_str_t                           *value;
-    ngx_http_php_session_search_t       *search;
-    ngx_http_variable_t                 *v;
-    ngx_int_t                            index;
+    ngx_http_script_compile_t           sc_session, sc_searchkey;
+    ngx_http_php_session_loc_conf_t    *pscf = conf;
+    ngx_str_t                          *value;
+    ngx_http_php_session_search_t      *search;
+    ngx_http_variable_t                *v;
+    ngx_int_t                           index;
     
     if (pscf->searches == NULL)
     {
@@ -173,12 +172,18 @@ ngx_http_php_session_parse_directive(ngx_conf_t *cf, ngx_command_t *cmd, void *c
     
     search->result_index = index;
     
-    search->session.len = value[2].len;
-    search->session.data = value[2].data;
-    search->searchkey.len = value[3].len;
-    search->searchkey.data = value[3].data;
+    search->session.value.len = value[2].len;
+    search->session.value.data = value[2].data;
+    search->searchkey.value.len = value[3].len;
+    search->searchkey.value.data = value[3].data;
     
-    if (ngx_http_php_session_compile_session(cf, search) != NGX_CONF_OK)
+
+    if (ngx_http_php_session_compile_variable(&sc_session, cf, &search->session) != NGX_CONF_OK)
+    {
+        return NGX_CONF_ERROR;
+    }
+
+    if (ngx_http_php_session_compile_variable(&sc_searchkey, cf, &search->searchkey) != NGX_CONF_OK)
     {
         return NGX_CONF_ERROR;
     }
@@ -187,60 +192,22 @@ ngx_http_php_session_parse_directive(ngx_conf_t *cf, ngx_command_t *cmd, void *c
 }
 
 static char *
-ngx_http_php_session_compile_session(ngx_conf_t *cf, ngx_http_php_session_search_t *search)
+ngx_http_php_session_compile_variable(ngx_http_script_compile_t *sc, ngx_conf_t *cf, ngx_http_php_session_variable_data_t *vardata)
 {
-    ngx_http_php_session_loc_conf_t *pslc = ngx_http_conf_get_module_loc_conf(cf, ngx_http_php_session_module);
+    ngx_memzero(sc, sizeof(ngx_http_script_compile_t));
+
+    sc->cf = cf;
+    sc->source = &vardata->value;
+    sc->lengths = &vardata->lengths;
+    sc->lengths = &vardata->values;
+    sc->variables = ngx_http_script_variables_count(&vardata->value);
+    sc->complete_lengths = 1;
+    sc->complete_values = 1;
     
-    ngx_http_script_compile_t sc_session, sc_searchkey;
-    ngx_memzero(&sc_session, sizeof(ngx_http_script_compile_t));
-    ngx_memzero(&sc_searchkey, sizeof(ngx_http_script_compile_t));
-    
-    sc_session.cf = pslc->cf;
-    sc_session.source = &search->session;
-    sc_session.lengths = &search->session_lengths;
-    sc_session.values = &search->session_values;
-    sc_session.variables = ngx_http_script_variables_count(&search->session);
-    sc_session.complete_lengths = 1;
-    sc_session.complete_values = 1;
-    
-    if (ngx_http_script_compile(&sc_session) != NGX_OK) {
+    if (ngx_http_script_compile(sc) != NGX_OK) {
         return NGX_CONF_ERROR;
     }
-    
-    sc_searchkey.cf = pslc->cf;
-    sc_searchkey.source = &search->searchkey;
-    sc_searchkey.lengths = &search->searchkey_lengths;
-    sc_searchkey.values = &search->searchkey_values;
-    sc_searchkey.variables = ngx_http_script_variables_count(&search->searchkey);
-    sc_searchkey.complete_lengths = 1;
-    sc_searchkey.complete_values = 1;
-    
-    if (ngx_http_script_compile(&sc_searchkey) != NGX_OK) {
-        return NGX_CONF_ERROR;
-    }
-    
-    return NGX_CONF_OK;
-}
 
-static char *
-ngx_http_php_session_compile_extraction(ngx_conf_t *cf, ngx_http_php_session_value_extraction_t *extraction)
-{
-    ngx_http_php_session_loc_conf_t *pslc = ngx_http_conf_get_module_loc_conf(cf, ngx_http_php_session_module);
-    ngx_http_script_compile_t sc_extraction;
-    ngx_memzero(&sc_extraction, sizeof(ngx_http_script_compile_t));
-
-    sc_extraction.cf = pslc->cf;
-    sc_extraction.source = &extraction->value;
-    sc_extraction.lengths = &extraction->value_lengths;
-    sc_extraction.values = &extraction->value_values;
-    sc_extraction.variables = ngx_http_script_variables_count(&extraction->value);
-    sc_extraction.complete_lengths = 1;
-    sc_extraction.complete_values = 1;
-
-    if (ngx_http_script_compile(&sc_extraction) != NGX_OK) {
-        return NGX_CONF_ERROR;
-    }
-    
     return NGX_CONF_OK;
 }
 
@@ -266,17 +233,17 @@ ngx_http_php_session_variable(ngx_http_request_t *r, ngx_http_variable_value_t *
     }
     
     
-    if (ngx_http_script_run(r, &search->session, search->session_lengths->elts, 0 , search->session_values->elts) == NULL) {
+    if (ngx_http_script_run(r, &search->session.value, search->session.lengths->elts, 0 , search->session.values->elts) == NULL) {
         
         return NGX_ERROR;
     }
     
-    if (ngx_http_script_run(r, &search->searchkey, search->searchkey_lengths->elts, 0 , search->searchkey_values->elts) == NULL) {
+    if (ngx_http_script_run(r, &search->searchkey.value, search->searchkey.lengths->elts, 0 , search->searchkey.values->elts) == NULL) {
         ngx_log_error(NGX_LOG_INFO, r->connection->log, 0, "searchkey evaluation failed");
         return NGX_ERROR;
     }
     
-    if (extract_value(&search->searchkey, &search->session, &search->result_string) != NGX_OK) {
+    if (extract_value(&search->searchkey.value, &search->session.value, &search->result_string) != NGX_OK) {
         return NGX_ERROR;
     }
     
@@ -290,11 +257,12 @@ ngx_http_php_session_variable(ngx_http_request_t *r, ngx_http_variable_value_t *
 static char *
 ngx_http_php_session_strip_formatting_directive(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
 {
-    ngx_http_php_session_loc_conf_t     *pscf = conf;
-    ngx_str_t                           *value;
+    ngx_http_php_session_loc_conf_t        *pscf = conf;
+    ngx_str_t                              *value;
     ngx_http_php_session_value_extraction_t     *extraction;
-    ngx_http_variable_t                 *v;
-    ngx_int_t                            index;
+    ngx_http_variable_t                    *v;
+    ngx_int_t                               index;
+    ngx_http_script_compile_t               sc_extraction;
     
     if (pscf->extractions == NULL)
     {
@@ -337,10 +305,10 @@ ngx_http_php_session_strip_formatting_directive(ngx_conf_t *cf, ngx_command_t *c
 
     extraction->result_index = index;
 
-    extraction->value.len = value[2].len;
-    extraction->value.data = value[2].data;
+    extraction->value.value.len = value[2].len;
+    extraction->value.value.data = value[2].data;
 
-    if (ngx_http_php_session_compile_extraction(cf, extraction) != NGX_CONF_OK)
+    if (ngx_http_php_session_compile_variable(&sc_extraction, cf, &extraction->value) != NGX_CONF_OK)
     {
         return NGX_CONF_ERROR;
     }
@@ -369,12 +337,12 @@ ngx_http_php_session_strip_formatting(ngx_http_request_t *r, ngx_http_variable_v
         }
     }
     
-    if (ngx_http_script_run(r, &extraction->value, extraction->value_lengths->elts, 0 , extraction->value_values->elts) == NULL) {
+    if (ngx_http_script_run(r, &extraction->value.value, extraction->value.lengths->elts, 0 , extraction->value.values->elts) == NULL) {
         ngx_log_error(NGX_LOG_INFO, r->connection->log, 0, "extraction value evaluation failed");
         return NGX_ERROR;
     }
 
-    if (value_strip_format(&extraction->value, &extraction->result_string) != NGX_OK) {
+    if (value_strip_format(&extraction->value.value, &extraction->result_string) != NGX_OK) {
     	return NGX_ERROR;
     }
     
