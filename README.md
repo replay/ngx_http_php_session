@@ -3,9 +3,11 @@ Nginx PHP session
 
 This is an Nginx module that can extract values out of a serialized PHP Session and store them into an Nginx variable to make them reusable in the Nginx configuration
 
+
 Some more explanation
 =====================
 <a href="http://mauro-stettler.blogspot.com/2010/02/variables-from-php-sessions-in-nginx.html">http://mauro-stettler.blogspot.com/2010/02/variables-from-php-sessions-in-nginx.html</a>
+
 
 Example
 ===============
@@ -59,3 +61,35 @@ The above specified array path would find its way through a session array for ex
                     [getGender] => m
                 )
         )
+
+
+Stripping the formatting of the extracted values
+================================================
+
+After you extract a value from the session, using the above syntax, you get some string in a format like s:6:"DrEvil", but actually the value that you want is only DrEvil, you don't need PHP's definition of that this is a string and how long it is. For exactly that i recently added a function called php_session_strip_formatting.
+
+You can use it like for example following:
+
+    location / {
+        set $my_formatted_string "s:6:\"DrEvil\"";
+        echo $my_formatted_string;
+        php_session_strip_formatting $my_stripped_string $my_formatted_string; # remove the formatting
+        echo $my_stripped_string;
+        return 200;
+    }
+
+And the output will look like :
+
+   s:6:"DrEvil"
+   DrEvil
+
+The php_session_strip_formatting supports the following serialized datatypes:
+
+Type    | Identifier
+--------|-----------
+Boolean | b
+Integer | i
+Double  | d
+String  | s
+
+All other Datatypes will simply be ignored and the result variable will be left empty;
