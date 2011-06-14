@@ -26,3 +26,4 @@ static ngx_int_t is_element_separator(u_char *);
 u_char * next_separator_by_level(u_char *string, ngx_uint_t len);
 static ngx_int_t shift_element(u_char **start, u_char **end, unsigned *len);
 static ngx_int_t store_result(extract_ctx *ctx, ngx_str_t *result);
+static ngx_int_t value_strip_format(ngx_str_t *value, ngx_str_t *result_string);

@@ -137,3 +137,35 @@ is_element_separator(u_char *pos)
     }
     return IS_NOT_SEPARATOR;
 }
+
+static ngx_int_t
+value_strip_format(ngx_str_t *value, ngx_str_t *result_string)
+{
+    switch (*value->data) {
+    	case 98:
+		result_string->data = value->data + 2;
+		result_string->len = 1;
+	break;
+	case 105:
+		result_string->data = value->data + 2;
+		result_string->len = value->len - 2;
+	break;
+	case 100:
+		result_string->data = value->data + 2;
+		result_string->len = value->len - 2;
+	break;
+	case 115:
+		result_string->data = value->data;
+		result_string->len = value->len;
+		result_string->data += 4; // the first " can't be less than 4 bytes after the start of the string
+		result_string->len -= 4;
+		while (*(result_string->data - 1) != 34 && result_string->data < (value->data + value->len)) // compare with -1 to remove the leading "
+		{
+			result_string->data++;
+			result_string->len--;
+		}
+		result_string->len--; // remove trailing "
+	break;
+    }
+    return NGX_OK;
+}

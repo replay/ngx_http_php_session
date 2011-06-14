@@ -8,6 +8,7 @@
 typedef struct {
     ngx_conf_t                      *cf;
     ngx_array_t                     *searches; // array of ngx_http_php_session_search_t
+    ngx_array_t                     *extractions; // array of ngx_http_php_value_extraction_t
 } ngx_http_php_session_loc_conf_t;
 
 typedef struct {
@@ -22,6 +23,15 @@ typedef struct {
     ngx_array_t                     *searchkey_lengths;
     ngx_array_t                     *searchkey_values;
 } ngx_http_php_session_search_t;
+
+typedef struct {
+    ngx_uint_t                       result_index;
+    ngx_str_t                        result_string;
+    
+    ngx_str_t                        value;
+    ngx_array_t                     *value_lengths;
+    ngx_array_t                     *value_values;
+} ngx_http_php_session_value_extraction_t;
     
 typedef struct {
     ngx_array_t                     *sessions;
@@ -33,12 +43,21 @@ static char *ngx_http_php_session_merge_loc_conf(ngx_conf_t *cf, void *parent, v
 static char * ngx_http_php_session_parse_directive(ngx_conf_t *cf, ngx_command_t *cmd, void *conf);
 static char *ngx_http_php_session_compile_session(ngx_conf_t *cf, ngx_http_php_session_search_t *search);
 static ngx_int_t ngx_http_php_session_variable(ngx_http_request_t *r, ngx_http_variable_value_t *v, uintptr_t data);
+static char *ngx_http_php_session_strip_formatting_directive(ngx_conf_t *cf, ngx_command_t *cmd, void *conf);
+static ngx_int_t ngx_http_php_session_strip_formatting(ngx_http_request_t *r, ngx_http_variable_value_t *v, uintptr_t data);
+static char *ngx_http_php_session_compile_extraction(ngx_conf_t *cf, ngx_http_php_session_value_extraction_t *extraction);
     
 
 static ngx_command_t  ngx_http_php_session_commands[] = {
  { ngx_string("php_session_parse"),
     NGX_HTTP_LOC_CONF|NGX_CONF_TAKE3,
     ngx_http_php_session_parse_directive, //ngx_conf_set_keyval_slot,
+    NGX_HTTP_LOC_CONF_OFFSET,
+    0,
+    NULL},
+ { ngx_string("php_session_strip_formatting"),
+    NGX_HTTP_LOC_CONF|NGX_CONF_TAKE2,
+    ngx_http_php_session_strip_formatting_directive,
     NGX_HTTP_LOC_CONF_OFFSET,
     0,
     NULL},
@@ -203,6 +222,28 @@ ngx_http_php_session_compile_session(ngx_conf_t *cf, ngx_http_php_session_search
     return NGX_CONF_OK;
 }
 
+static char *
+ngx_http_php_session_compile_extraction(ngx_conf_t *cf, ngx_http_php_session_value_extraction_t *extraction)
+{
+    ngx_http_php_session_loc_conf_t *pslc = ngx_http_conf_get_module_loc_conf(cf, ngx_http_php_session_module);
+    ngx_http_script_compile_t sc_extraction;
+    ngx_memzero(&sc_extraction, sizeof(ngx_http_script_compile_t));
+
+    sc_extraction.cf = pslc->cf;
+    sc_extraction.source = &extraction->value;
+    sc_extraction.lengths = &extraction->value_lengths;
+    sc_extraction.values = &extraction->value_values;
+    sc_extraction.variables = ngx_http_script_variables_count(&extraction->value);
+    sc_extraction.complete_lengths = 1;
+    sc_extraction.complete_values = 1;
+
+    if (ngx_http_script_compile(&sc_extraction) != NGX_OK) {
+        return NGX_CONF_ERROR;
+    }
+    
+    return NGX_CONF_OK;
+}
+
 static ngx_int_t
 ngx_http_php_session_variable(ngx_http_request_t *r, ngx_http_variable_value_t *v, uintptr_t data)
 {    
@@ -246,3 +287,101 @@ ngx_http_php_session_variable(ngx_http_request_t *r, ngx_http_variable_value_t *
     return NGX_OK;
 }
 
+static char *
+ngx_http_php_session_strip_formatting_directive(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
+{
+    ngx_http_php_session_loc_conf_t     *pscf = conf;
+    ngx_str_t                           *value;
+    ngx_http_php_session_value_extraction_t     *extraction;
+    ngx_http_variable_t                 *v;
+    ngx_int_t                            index;
+    
+    if (pscf->extractions == NULL)
+    {
+        pscf->extractions = ngx_array_create(cf->pool, cf->args->nelts, sizeof(ngx_http_php_session_value_extraction_t));
+        if(pscf->extractions == NULL) {
+            return NGX_CONF_ERROR;
+        }
+    }
+    
+    extraction = ngx_array_push(pscf->extractions);
+    if (extraction == NULL) {
+        return NGX_CONF_ERROR;
+    }
+	
+    value = cf->args->elts;
+    
+    if (value[1].data[0] != '$') {
+        ngx_conf_log_error(NGX_LOG_EMERG, cf, 0, "invalid variable name \"%V\"", &value[1]);
+        return NGX_CONF_ERROR;
+    }
+    
+    value[1].len--;
+    value[1].data++;
+    
+    v = ngx_http_add_variable(cf, &value[1], NGX_HTTP_VAR_CHANGEABLE);
+    if (v == NULL) {
+        return NGX_CONF_ERROR;
+    }
+    
+    index = ngx_http_get_variable_index(cf, &value[1]);
+    if (index == NGX_ERROR) {
+        return NGX_CONF_ERROR;
+    }
+    
+    if (v->get_handler == NULL)
+    {
+        v->get_handler = ngx_http_php_session_strip_formatting;
+        v->data = index;
+    }
+
+    extraction->result_index = index;
+
+    extraction->value.len = value[2].len;
+    extraction->value.data = value[2].data;
+
+    if (ngx_http_php_session_compile_extraction(cf, extraction) != NGX_CONF_OK)
+    {
+        return NGX_CONF_ERROR;
+    }
+
+    return NGX_OK;
+}
+
+static ngx_int_t
+ngx_http_php_session_strip_formatting(ngx_http_request_t *r, ngx_http_variable_value_t *v, uintptr_t data)
+{
+    ngx_http_php_session_loc_conf_t     *pscf = ngx_http_get_module_loc_conf(r, ngx_http_php_session_module);
+    ngx_uint_t                           extraction_num;
+    ngx_http_php_session_value_extraction_t   *extractions;
+    ngx_http_php_session_value_extraction_t   *extraction = NULL;
+    
+    extractions = (ngx_http_php_session_value_extraction_t*) pscf->extractions->elts;
+    for (extraction_num = 0; extraction_num < pscf->extractions->nelts; extraction_num++) {
+        extraction = &extractions[extraction_num]; 
+        if (extraction->result_index == data) {
+            break;
+        } else {
+            if (extraction_num == pscf->extractions->nelts) {
+                ngx_log_error(NGX_LOG_INFO, r->connection->log, 0, "error finding the right extraction variable");
+                return NGX_ERROR;
+            }
+        }
+    }
+    
+    if (ngx_http_script_run(r, &extraction->value, extraction->value_lengths->elts, 0 , extraction->value_values->elts) == NULL) {
+        ngx_log_error(NGX_LOG_INFO, r->connection->log, 0, "extraction value evaluation failed");
+        return NGX_ERROR;
+    }
+
+    if (value_strip_format(&extraction->value, &extraction->result_string) != NGX_OK) {
+    	return NGX_ERROR;
+    }
+    
+    v->len = extraction->result_string.len;
+    v->data = extraction->result_string.data;
+    v->valid = 1;
+    
+    return NGX_OK;
+
+}
