@@ -149,6 +149,8 @@ ngx_http_php_session_compile_variable(ngx_http_script_compile_t *sc, ngx_conf_t 
     sc->source = &vardata->value;
     sc->lengths = &vardata->lengths;
     sc->values = &vardata->values;
+    *sc->lengths = NULL;
+    *sc->values = NULL;
     sc->variables = ngx_http_script_variables_count(&vardata->value);
     sc->complete_lengths = 1;
     sc->complete_values = 1;
@@ -249,7 +251,7 @@ ngx_http_php_session_parse_directive(ngx_conf_t *cf, ngx_command_t *cmd, void *c
     search->result_index = index;
 
     value = cf->args->elts;
-    
+
     search->session.value.len = value[2].len;
     search->session.value.data = value[2].data;
     search->searchkey.value.len = value[3].len;
