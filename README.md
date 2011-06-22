@@ -92,5 +92,7 @@ All other Datatypes will simply be ignored and the result variable will be left 
 
 More Examples
 =============
+
 <a href="http://mauro-stettler.blogspot.com/2010/02/variables-from-php-sessions-in-nginx.html">http://mauro-stettler.blogspot.com/2010/02/variables-from-php-sessions-in-nginx.html</a>
+
 <a href="http://mauro-stettler.blogspot.com/2011/06/php-session-parser-in-production.html">http://mauro-stettler.blogspot.com/2011/06/php-session-parser-in-production.html</a>
