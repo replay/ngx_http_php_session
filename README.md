@@ -4,11 +4,6 @@ Nginx PHP session
 This is an Nginx module that can extract values out of a serialized PHP Session and store them into an Nginx variable to make them reusable in the Nginx configuration
 
 
-Some more explanation
-=====================
-<a href="http://mauro-stettler.blogspot.com/2010/02/variables-from-php-sessions-in-nginx.html">http://mauro-stettler.blogspot.com/2010/02/variables-from-php-sessions-in-nginx.html</a>
-
-
 Example
 ===============
 
@@ -93,3 +88,9 @@ Double      | d
 String      | s
 
 All other Datatypes will simply be ignored and the result variable will be left empty;
+
+
+More Examples
+=============
+<a href="http://mauro-stettler.blogspot.com/2010/02/variables-from-php-sessions-in-nginx.html">http://mauro-stettler.blogspot.com/2010/02/variables-from-php-sessions-in-nginx.html</a>
+<a href="http://mauro-stettler.blogspot.com/2011/06/php-session-parser-in-production.html">http://mauro-stettler.blogspot.com/2011/06/php-session-parser-in-production.html</a>
