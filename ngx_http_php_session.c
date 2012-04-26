@@ -364,6 +364,7 @@ ngx_http_php_session_strip_formatting_variable(ngx_http_request_t *r, ngx_http_v
     }
 
     if (value_strip_format(&extraction->value.value, &extraction->result_string) != NGX_OK) {
+        ngx_log_error(NGX_LOG_INFO, r->connection->log, 0, "error in extraction process for \"%V\"", &extraction->value);
     	return NGX_ERROR;
     }
     

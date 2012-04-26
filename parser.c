@@ -166,6 +166,9 @@ value_strip_format(ngx_str_t *value, ngx_str_t *result_string)
 		}
 		result_string->len--; // remove trailing "
 	break;
+    default:
+        return NGX_ERROR;
+    break;
     }
     return NGX_OK;
 }
